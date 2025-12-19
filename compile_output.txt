@@ -1,0 +1,37 @@
+﻿Loaded package environment from C:\Users\saths\AppData\Roaming\ghc\x86_64-mingw32-9.6.7\environments\default
+[1 of 6] Compiling DataTypes        ( DataTypes.hs, DataTypes.o ) [Flags changed]
+ghc : 
+At line:1 char:145
++ ... h","User"); ghc -O2 
+-threaded -rtsopts Main.hs 
+-o student-analytics 2 ...
++                 ~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          
+    : NotSpecified: (:Stri  
+  ng) [], RemoteException
+    + FullyQualifiedErrorId 
+    : NativeCommandError
+ 
+DataTypes.hs:20:1: error:
+    Could not load module 
+`Control.DeepSeq'
+    It is a member of the 
+hidden package 
+`deepseq-1.4.8.1'.
+    You can run `:set 
+-package deepseq' to expose 
+it.
+    (Note: this unloads all 
+the modules in the current 
+scope.)
+    Use -v (or `:set -v` in 
+ghci) to see a list of the 
+files searched for.
+   |
+20 | import Control.DeepSeq 
+(NFData(..))
+   | ^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^
+[2 of 6] Compiling Utils            ( Utils.hs, Utils.o ) [Flags changed]
