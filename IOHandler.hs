@@ -5,8 +5,8 @@ License     : MIT
 Maintainer  : student
 
 This module contains all IO operations including file reading,
-user interaction, and result display. Side effects are isolated
-here while computation remains pure.
+user interaction, and result display. Uses "Safe Mode" ASCII
+characters ensuring compatibility across all terminals.
 -}
 
 module IOHandler
@@ -22,7 +22,6 @@ import Utils
 import Processing
 
 -- | Main application entry point
--- Reads the CSV file and runs the interactive menu loop
 runApp :: IO ()
 runApp = do
     printBanner
@@ -52,6 +51,8 @@ processCSVContent content =
         Left (InvalidMark lineNum subj _) ->
             putStrLn $ "\n[!] Error on line " ++ show lineNum ++ 
                        ": Invalid mark for subject '" ++ subj ++ "'"
+        Left (InvalidAttendance lineNum msg) ->
+            putStrLn $ "\n[!] Error on line " ++ show lineNum ++ ": " ++ msg
         Right (subjects, students) -> do
             putStrLn $ "\n[OK] Successfully loaded " ++ show (length students) ++ 
                        " students with " ++ show (length subjects) ++ " subjects."
@@ -83,10 +84,13 @@ menuLoop subjects students results = do
             printFailingStudents results
             menuLoop subjects students results
         "4" -> do
+            printAttendanceAnalysis results
+            menuLoop subjects students results
+        "5" -> do
             putStrLn "\nThank you for using the Student Performance Analytics System!"
             putStrLn "Goodbye!\n"
         _ -> do
-            putStrLn "\n[!] Invalid choice. Please enter 1, 2, 3, or 4.\n"
+            putStrLn "\n[!] Invalid choice. Please enter 1-5.\n"
             menuLoop subjects students results
 
 -- | Print the main menu options
@@ -98,7 +102,8 @@ printMenu = do
     putStrLn "|  (1) Summary Analytics                       |"
     putStrLn "|  (2) Top N Students (by total marks)         |"
     putStrLn "|  (3) List Failing Students (Grade F)         |"
-    putStrLn "|  (4) Exit                                    |"
+    putStrLn "|  (4) Attendance vs Marks Analytics           |"
+    putStrLn "|  (5) Exit                                    |"
     putStrLn "+----------------------------------------------+"
 
 -- | Print summary analytics report
@@ -110,9 +115,13 @@ printSummaryAnalytics subjects students results = do
     
     -- Class Overview
     putStrLn "\n=== CLASS OVERVIEW ==="
-    putStrLn $ "   Total Students: " ++ show (length students)
-    putStrLn $ "   Subjects: " ++ unwords subjects
-    putStrLn $ "   Class Average: " ++ formatDouble (classAverage results) ++ "%"
+    putStrLn $ "   Total Students:  " ++ show (length students)
+    putStrLn $ "   Subjects:        " ++ unwords subjects
+    putStrLn $ "   Class Avg Marks: " ++ formatDouble (classAverage results) ++ "%"
+    
+    -- Avg Attendance
+    let avgAtt = mean (map attendanceRate results)
+    putStrLn $ "   Class Avg Att:   " ++ formatDouble avgAtt ++ "%"
     
     -- Subject Averages
     putStrLn "\n=== SUBJECT AVERAGES ==="
@@ -154,15 +163,17 @@ printStudentTable subjects results = do
     -- Header
     let idCol = padRight 6 "ID"
         nameCol = padRight 12 "Name"
-        subjCols = map (padRight 8) subjects
-        totalCol = padRight 8 "Total"
-        avgCol = padRight 8 "Avg"
-        gradeCol = "Grade"
-        dashLine = replicate 74 '-'
+        attCol = padRight 6 "Att%"
+        subjCols = map (padRight 6) subjects
+        totalCol = padRight 6 "Total"
+        avgCol = padRight 7 "Avg"
+        gradeCol = padRight 6 "Gra"
+        statusCol = "Status"
+        dashLine = replicate 84 '-'
     
     putStrLn $ "   +" ++ dashLine ++ "+"
-    putStrLn $ "   | " ++ idCol ++ " " ++ nameCol ++ " " ++ 
-               unwords subjCols ++ " " ++ totalCol ++ " " ++ avgCol ++ " " ++ gradeCol ++ " |"
+    putStrLn $ "   | " ++ idCol ++ " " ++ nameCol ++ " " ++ attCol ++ " " ++
+               unwords subjCols ++ " " ++ totalCol ++ " " ++ avgCol ++ " " ++ gradeCol ++ " " ++ statusCol ++ " |"
     putStrLn $ "   +" ++ dashLine ++ "+"
     
     -- Data rows
@@ -176,15 +187,17 @@ printStudentRow subjects res = do
     let s = student res
         idCol = padRight 6 (studentId s)
         nameCol = padRight 12 (take 11 $ studentName s)
-        markCols = map (padRight 8 . show) (marks s)
-        -- Pad marks if fewer than expected subjects
-        paddedMarks = markCols ++ replicate (length subjects - length markCols) (padRight 8 "-")
-        totalCol = padRight 8 (show $ totalMarks res)
-        avgCol = padRight 8 (formatDouble $ avgMarks res)
-        gradeCol = show (grade res)
+        attCol = padRight 6 (formatDouble $ attendanceRate res)
+        markCols = map (padRight 6 . show) (marks s)
+        paddedMarks = markCols ++ replicate (length subjects - length markCols) (padRight 6 "-")
+        totalCol = padRight 6 (show $ totalMarks res)
+        avgCol = padRight 7 (formatDouble $ avgMarks res)
+        gradeCol = padRight 6 (show $ grade res)
+        status = if isAtRisk res then "AtRisk" else "OK"
+        statusCol = status
     
-    putStrLn $ "   | " ++ idCol ++ " " ++ nameCol ++ " " ++ 
-               unwords paddedMarks ++ " " ++ totalCol ++ " " ++ avgCol ++ " " ++ gradeCol ++ "     |"
+    putStrLn $ "   | " ++ idCol ++ " " ++ nameCol ++ " " ++ attCol ++ " " ++
+               unwords paddedMarks ++ " " ++ totalCol ++ " " ++ avgCol ++ " " ++ gradeCol ++ " " ++ statusCol ++ " |"
 
 -- | Prompt for and print top N students
 printTopNStudents :: [StudentResult] -> IO ()
@@ -199,11 +212,11 @@ printTopNStudents results = do
             | otherwise -> do
                 let topStudents = topN n results
                 putStrLn $ "\n=== TOP " ++ show (length topStudents) ++ " STUDENTS (by total marks) ==="
-                putStrLn "   +------------------------------------------------+"
-                putStrLn "   | Rank   ID       Name            Total   Grade  |"
-                putStrLn "   +------------------------------------------------+"
+                putStrLn "   +------------------------------------------------------------+"
+                putStrLn "   | Rank   ID       Name            Att%    Total   Grade      |"
+                putStrLn "   +------------------------------------------------------------+"
                 mapM_ printRankedStudent (zip [1..] topStudents)
-                putStrLn "   +------------------------------------------------+"
+                putStrLn "   +------------------------------------------------------------+"
                 putStrLn ""
 
 -- | Print a ranked student entry
@@ -213,17 +226,17 @@ printRankedStudent (rank, res) = do
         rankStr = padRight 6 ("#" ++ show rank)
         idCol = padRight 8 (studentId s)
         nameCol = padRight 15 (take 14 $ studentName s)
+        attCol = padRight 8 (formatDouble $ attendanceRate res)
         totalCol = padRight 7 (show $ totalMarks res)
         gradeCol = show (grade res)
     
-    putStrLn $ "   | " ++ rankStr ++ " " ++ idCol ++ " " ++ nameCol ++ " " ++ 
-               totalCol ++ " " ++ gradeCol ++ "     |"
+    putStrLn $ "   | " ++ rankStr ++ " " ++ idCol ++ " " ++ nameCol ++ " " ++ attCol ++ " " ++
+               totalCol ++ " " ++ gradeCol ++ "          |"
 
 -- | Print failing students (Grade F)
 printFailingStudents :: [StudentResult] -> IO ()
 printFailingStudents results = do
     let failingStudents = failing results
-    
     putStrLn "\n=== FAILING STUDENTS (Grade F) ==="
     
     if null failingStudents
@@ -231,25 +244,64 @@ printFailingStudents results = do
         else do
             putStrLn $ "   Found " ++ show (length failingStudents) ++ " failing student(s):\n"
             putStrLn "   +----------------------------------------------------+"
-            putStrLn "   | ID       Name             Average   Total   Status |"
+            putStrLn "   | ID       Name             Average   Att%    Status |"
             putStrLn "   +----------------------------------------------------+"
             mapM_ printFailingStudent failingStudents
             putStrLn "   +----------------------------------------------------+"
             putStrLn "\n   [*] These students need additional support."
             putStrLn ""
 
--- | Print a single failing student entry
 printFailingStudent :: StudentResult -> IO ()
 printFailingStudent res = do
     let s = student res
         idCol = padRight 8 (studentId s)
         nameCol = padRight 16 (take 15 $ studentName s)
         avgCol = padRight 9 (formatDouble (avgMarks res) ++ "%")
-        totalCol = padRight 7 (show $ totalMarks res)
+        attCol = padRight 7 (formatDouble $ attendanceRate res)
         statusCol = "FAIL"
     
-    putStrLn $ "   | " ++ idCol ++ " " ++ nameCol ++ " " ++ avgCol ++ " " ++ 
-               totalCol ++ " " ++ statusCol ++ "   |"
+    putStrLn $ "   | " ++ idCol ++ " " ++ nameCol ++ " " ++ avgCol ++ " " ++ attCol ++ " " ++ statusCol ++ "   |"
+
+-- | Print Attendance Analytics Report
+printAttendanceAnalysis :: [StudentResult] -> IO ()
+printAttendanceAnalysis results = do
+    let (highAvg, medAvg, lowAvg, mCorr) = computeAttendanceAnalytics results
+    
+    putStrLn "\n+--------------------------------------------------------------+"
+    putStrLn "|               ATTENDANCE vs MARKS ANALYSIS                   |"
+    putStrLn "+--------------------------------------------------------------+"
+    
+    -- Correlation Section
+    putStrLn "\n1. STATISTICAL CORRELATION"
+    case mCorr of
+        Nothing -> putStrLn "   [!] Insufficient data to calculate correlation."
+        Just r -> do
+            putStrLn $ "   Pearson Correlation (r): " ++ formatDouble r
+            putStrLn $ "   Interpretation:          " ++ interpretCorrelation r
+    
+    -- Group Comparison
+    putStrLn "\n2. GROUP COMPARISON (Avg Exam Performance)"
+    putStrLn "   +---------------------+----------------+"
+    putStrLn "   | Attendance Group    | Avg Exam Mark  |"
+    putStrLn "   +---------------------+----------------+"
+    putStrLn $ "   | High (>85%)         | " ++ padRight 14 (formatDouble highAvg ++ "%") ++ " |"
+    putStrLn $ "   | Medium (70-85%)     | " ++ padRight 14 (formatDouble medAvg ++ "%") ++ " |"
+    putStrLn $ "   | Low (<70%)          | " ++ padRight 14 (formatDouble lowAvg ++ "%") ++ " |"
+    putStrLn "   +---------------------+----------------+"
+    
+    -- At Risk Summary
+    let riskCount = length $ filter isAtRisk results
+    putStrLn $ "\n3. RISK ASSESSMENT"
+    putStrLn $ "   Students At Risk: " ++ show riskCount ++ " (Low attendance or poor performance)"
+    putStrLn ""
+
+interpretCorrelation :: Double -> String
+interpretCorrelation r
+    | r >= 0.5   = "Strong POSITIVE relationship (More attendance = Better marks)"
+    | r >= 0.3   = "Moderate POSITIVE relationship"
+    | r >= 0.1   = "Weak POSITIVE relationship"
+    | r >= -0.1  = "NO clear relationship"
+    | otherwise  = "NEGATIVE relationship (Unusual)"
 
 -- | Print the application banner
 printBanner :: IO ()
@@ -258,8 +310,7 @@ printBanner = do
     putStrLn "+-------------------------------------------------------------------+"
     putStrLn "|                                                                   |"
     putStrLn "|     STUDENT PERFORMANCE ANALYTICS SYSTEM                          |"
-    putStrLn "|                                                                   |"
-    putStrLn "|     A Functional Programming Approach with Parallel Processing    |"
+    putStrLn "|     (v2.0 - Attendance & Statistics Module)                       |"
     putStrLn "|                                                                   |"
     putStrLn "+-------------------------------------------------------------------+"
     putStrLn ""
